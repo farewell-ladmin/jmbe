@@ -76,6 +76,43 @@ class IMBEFrame
         decode();
     }
 
+    private IMBEFrame(boolean[] imbe4400Data)
+    {
+        if(imbe4400Data == null || imbe4400Data.length != 88)
+        {
+            throw new IllegalArgumentException("IMBE 4400 data must contain 88 bits");
+        }
+
+        mFrame = new BinaryFrame(144);
+        loadImbe4400Data(imbe4400Data);
+        mFundamentalFrequency = IMBEFundamentalFrequency.fromValue(mFrame.getInt(VECTOR_B0));
+    }
+
+    static IMBEFrame fromImbe4400Data(boolean[] imbe4400Data)
+    {
+        return new IMBEFrame(imbe4400Data);
+    }
+
+    private void loadImbe4400Data(boolean[] data)
+    {
+        load(data, 0, 0, 12);
+        load(data, 12, 23, 12);
+        load(data, 24, 46, 12);
+        load(data, 36, 69, 12);
+        load(data, 48, 92, 11);
+        load(data, 59, 107, 11);
+        load(data, 70, 122, 11);
+        load(data, 81, 137, 7);
+    }
+
+    private void load(boolean[] data, int sourceOffset, int targetOffset, int length)
+    {
+        for(int x = 0; x < length; x++)
+        {
+            mFrame.set(targetOffset + x, data[sourceOffset + x]);
+        }
+    }
+
     private void decode()
     {
         IMBEInterleave.deinterleave(mFrame);

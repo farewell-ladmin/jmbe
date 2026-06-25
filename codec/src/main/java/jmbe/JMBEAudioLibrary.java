@@ -2,6 +2,7 @@ package jmbe;
 
 import jmbe.codec.ambe.AMBEAudioCodec;
 import jmbe.codec.imbe.IMBEAudioCodec;
+import jmbe.codec.imbe.ProVoiceIMBEAudioCodec;
 import jmbe.iface.IAudioCodec;
 import jmbe.iface.IAudioCodecLibrary;
 
@@ -37,7 +38,7 @@ public class JMBEAudioLibrary implements IAudioCodecLibrary
     @Override
     public int getBuildVersion()
     {
-        return 9;
+        return 10;
     }
 
     @Override
@@ -47,6 +48,7 @@ public class JMBEAudioLibrary implements IAudioCodecLibrary
         {
             case AMBEAudioCodec.CODEC_NAME:
             case IMBEAudioCodec.CODEC_NAME:
+            case ProVoiceIMBEAudioCodec.CODEC_NAME:
                 return true;
             default:
                 return false;
@@ -60,6 +62,8 @@ public class JMBEAudioLibrary implements IAudioCodecLibrary
         {
             case IMBEAudioCodec.CODEC_NAME:
                 return new IMBEAudioCodec();
+            case ProVoiceIMBEAudioCodec.CODEC_NAME:
+                return new ProVoiceIMBEAudioCodec();
             case AMBEAudioCodec.CODEC_NAME:
                 return new AMBEAudioCodec();
             default:
