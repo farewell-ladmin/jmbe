@@ -59,7 +59,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         mSynthesizer.reset();
     }
 
-    private boolean[][] unpackGrid(byte[] frameData)
+    boolean[][] unpackGrid(byte[] frameData)
     {
         if(frameData == null || frameData.length != GRID_BYTES)
         {
@@ -76,7 +76,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return grid;
     }
 
-    private void correctC0(boolean[][] grid)
+    void correctC0(boolean[][] grid)
     {
         BinaryFrame frame = new BinaryFrame(23);
 
@@ -93,7 +93,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         }
     }
 
-    private void demodulate(boolean[][] grid)
+    void demodulate(boolean[][] grid)
     {
         int seed = 0;
         for(int column = 18; column > 11; column--)
@@ -131,7 +131,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         }
     }
 
-    private boolean[] extractData(boolean[][] grid)
+    boolean[] extractData(boolean[][] grid)
     {
         boolean[] data = new boolean[88];
         int offset = 0;
@@ -155,7 +155,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return data;
     }
 
-    private int extractGolayReversed(boolean[] row, int firstColumn, int lastColumn, boolean[] data, int offset)
+    int extractGolayReversed(boolean[] row, int firstColumn, int lastColumn, boolean[] data, int offset)
     {
         BinaryFrame frame = new BinaryFrame(23);
         for(int column = lastColumn; column >= firstColumn; column--)
@@ -173,7 +173,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return offset;
     }
 
-    private int extractHammingReversed(boolean[] row, boolean[] data, int offset)
+    int extractHammingReversed(boolean[] row, boolean[] data, int offset)
     {
         int block = 0;
         for(int column = 14; column >= 0; column--)
@@ -200,7 +200,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return offset;
     }
 
-    private boolean[] convert7100To4400(boolean[] imbe7100Data)
+    boolean[] convert7100To4400(boolean[] imbe7100Data)
     {
         boolean[] imbe4400Data = new boolean[88];
         int b0 = 0;

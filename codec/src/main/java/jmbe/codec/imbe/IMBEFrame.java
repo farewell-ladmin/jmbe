@@ -32,7 +32,7 @@ class IMBEFrame
     public static final float LOG_2 = (float)Math.log(2.0);
 
     private static final int[] RANDOMIZER_SEED = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-    private static final int[] VECTOR_B0 = {0, 1, 2, 3, 4, 5, 141, 142};
+    private static final int[] VECTOR_B0 = {0, 1, 2, 3, 4, 5, 142, 143};
 
     /**
      * Message frame bit index of the voiced/unvoiced decision for all values
