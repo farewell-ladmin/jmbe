@@ -94,7 +94,30 @@ public class ProVoiceStandaloneWavTest
             {
                 throw new IllegalStateException("Frame " + i + " length " + frameBytes.length + " != " + expectedFrameSize);
             }
-            float[] audio = useProVoice ? provoiceCodec.getAudio(frameBytes) : p25Codec.getAudio(frameBytes);
+            float[] audio;
+            if(useProVoice)
+            {
+                // Break out the codec stages to log b0/L/w0 for pitch diagnostics
+                boolean[][] grid = provoiceCodec.unpackGrid(frameBytes);
+                provoiceCodec.correctC0(grid);
+                provoiceCodec.demodulate(grid);
+                boolean[] imbe7100 = provoiceCodec.extractData(grid);
+                boolean[] imbe4400 = provoiceCodec.convert7100To4400(imbe7100);
+                IMBEFrame frame = IMBEFrame.fromImbe4400Data(imbe4400);
+                int b0 = frame.getFrame().getInt(new int[]{0,1,2,3,4,5,141,142});
+                int L = frame.getFundamentalFrequency().getL();
+                float w0 = frame.getFundamentalFrequency().getFrequency();
+                float w0Hz = w0 * 8000f / (float)(2*Math.PI);
+                audio = provoiceCodec.getAudio(frameBytes);
+                if(i < 10 || (i % 200) == 0)
+                {
+                    System.out.println("frame#" + i + " b0=" + b0 + " L=" + L + " w0=" + w0 + " (" + w0Hz + "Hz) maxAbs=...");
+                }
+            }
+            else
+            {
+                audio = p25Codec.getAudio(frameBytes);
+            }
             float maxAbs = 0f;
             for(float s : audio)
             {
@@ -102,9 +125,13 @@ public class ProVoiceStandaloneWavTest
             }
             if(maxAbs > globalMaxAbs) globalMaxAbs = maxAbs;
             if(maxAbs < 1e-6f) silentFrames++; else nonzeroFrames++;
-            if(i < 5 || (i % 100) == 0)
+            if(!useProVoice && (i < 5 || (i % 100) == 0))
             {
                 System.out.println("frame#" + i + " maxAbs=" + maxAbs + " audioLen=" + audio.length);
+            }
+            if(useProVoice && (i < 10 || (i % 200) == 0))
+            {
+                System.out.println("  maxAbs=" + maxAbs + " audioLen=" + audio.length);
             }
             for(float s : audio)
             {
