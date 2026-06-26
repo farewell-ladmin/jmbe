@@ -94,7 +94,14 @@ enum Gain
 
     Gain(float gain)
     {
-        mGain = gain + 1.0f;
+        mGain = gain;
+        // Note: mbelib uses 'Gm[1] = B2[b2]' (raw LUT value) directly.  An earlier
+        // 'mGain = gain + 1.0f' offset was inherited from the AMBE/P25 history
+        // but produced a systematic +1.0 bias in the IMBE gain vector G, which
+        // propagated through the inverse DCT (R, C, T, log2M) and inflated
+        // every log spectral amplitude by +1.0.  Because M = 2^log2M, the
+        // synthesized audio came out exactly 2x too loud, causing the EDACS
+        // ProVoice garble.  Removing the offset matches mbelib verbatim.
     }
 
     public float getGain()
