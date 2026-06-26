@@ -185,6 +185,46 @@ public class ProVoiceIMBEAudioCodecTest
         return value;
     }
 
+    /**
+     * Live frame mbelib-vs-JMBE stage comparison. The packed grid
+     * 17FE20DB8CEAD8DC5E012F8470BA0074B8004A30F8 is the first frame of
+     * C:\Users\ethan\SDRTrunk\recordings\20260626_170239_851987500_1_PROVOICE_535_102.mbe
+     * and was dumped via the standalone mbelib provoice_stage_dump tool:
+     *   b0_7100=22 b0_4400=22 L=13 K=5 decode_status=0 c0_errors=1 data_errors=7
+     * Enable DUMP_STAGE_TO_STDERR to print JMBE's intermediate stages for diffing.
+     */
+    @Test
+    public void testLiveFrameMbelibComparison()
+    {
+        byte[] live = hex("17FE20DB8CEAD8DC5E012F8470BA0074B8004A30F8");
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        boolean[][] grid = codec.unpackGrid(live);
+        codec.correctC0(grid);
+        codec.demodulate(grid);
+        boolean[] imbe7100 = codec.extractData(grid);
+        boolean[] imbe4400 = codec.convert7100To4400(imbe7100);
+
+        // mbelib ground truth from provoice_stage_dump on the same packed grid:
+        // imbe7100=1000101001111001101001111101111011001111100000100110001110001001000111110000110001010010
+        // imbe4400=0001010011110011010011111011110110011111011000110010000100010010001111100001100010100101
+        // b0_7100=22 b0_4400=22 L=13 K=5
+        assertEquals("1000101001111001101001111101111011001111100000100110001110001001000111110000110001010010",
+                bits(imbe7100));
+        assertEquals("0001010011110011010011111011110110011111011000110010000100010010001111100001100010100101",
+                bits(imbe4400));
+
+        int b0_7100 = bitsToInt(imbe7100, new int[] {1, 2, 3, 4, 5, 6, 86, 87});
+        int b0_4400 = bitsToInt(imbe4400, new int[] {0, 1, 2, 3, 4, 5, 85, 86});
+        assertEquals(22, b0_7100);
+        assertEquals(22, b0_4400);
+
+        IMBEFrame frame = IMBEFrame.fromImbe4400Data(imbe4400);
+        assertEquals(13, frame.getFundamentalFrequency().getL());
+
+        float[] audio = codec.getAudio(live);
+        assertEquals(160, audio.length);
+    }
+
     @Test
     public void testCapturedGridMatchesMbelibStages()
     {
