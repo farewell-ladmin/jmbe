@@ -1,5 +1,6 @@
 package jmbe.codec.imbe;
 
+import jmbe.binary.BinaryFrame;
 import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -223,6 +224,142 @@ public class ProVoiceIMBEAudioCodecTest
 
         float[] audio = codec.getAudio(live);
         assertEquals(160, audio.length);
+    }
+
+    /**
+     * Dump JMBE's intermediate stages for one VALID frame from DSD-FME .imb
+     * dump: CA1A28803F1A082146CD7CE1B725BC8913220B40BD (mbelib ground truth:
+     * b0=20, L=13, K=5, decode_status=0).
+     */
+    @Test
+    public void testJmbeVsMbelibPerParameterValidFrame()
+    {
+        byte[] frame = hex("CA1A28803F1A082146CD7CE1B725BC8913220B40BD");
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        boolean[][] grid = codec.unpackGrid(frame);
+        codec.correctC0(grid);
+        codec.demodulate(grid);
+        boolean[] imbe7100 = codec.extractData(grid);
+        boolean[] imbe4400 = codec.convert7100To4400(imbe7100);
+        IMBEFrame jmbeframe = IMBEFrame.fromImbe4400Data(imbe4400);
+
+        int b0_jmbe = jmbeframe.getFrame().getInt(new int[] {0,1,2,3,4,5,141,142});
+        System.out.println("JMBE b0=" + b0_jmbe + " (expected 20)");
+
+        System.out.println("imbe7100=" + bits(imbe7100));
+        System.out.println("imbe4400=" + bits(imbe4400));
+
+        // Dump JMBE frame bits at QuantizedValueIndexes[L=13] positions, mapped back to imbe_d indices.
+        int L = jmbeframe.getFundamentalFrequency().getL();
+        System.out.println("L=" + L + " K=" + (L < 37 ? (L+2)/3 : 12));
+        int[][] qi = jmbe.codec.imbe.QuantizedValueIndexes.fromL(L).getIndexes();
+        for(int p = 0; p < qi.length; p++)
+        {
+            int harmonic = p + 3;
+            int[] positions = qi[p];
+            StringBuilder sb = new StringBuilder();
+            sb.append("b").append(harmonic).append(" framePositions=");
+            for(int x = 0; x < positions.length; x++)
+            {
+                int fpos = positions[x];
+                int imbeIndex = jmbeFramePosToImbeDIndex(fpos);
+                sb.append(fpos).append("(d").append(imbeIndex).append("=");
+                sb.append(imbe4400[imbeIndex] ? "1" : "0").append(")");
+                if(x < positions.length - 1) sb.append(",");
+            }
+            System.out.println(sb.toString());
+        }
+    }
+
+    /**
+     * Map JMBE frame position back to imbe_d index using loadImbe4400Data chunking:
+     *  coset 0: frame[0..11]   <- imbe_d[0..11]
+     *  coset 1: frame[23..34]  <- imbe_d[12..23]
+     *  coset 2: frame[46..57]  <- imbe_d[24..35]
+     *  coset 3: frame[69..80]  <- imbe_d[36..47]
+     *  coset 4: frame[92..102] <- imbe_d[48..58]
+     *  coset 5: frame[107..117]<- imbe_d[59..69]
+     *  coset 6: frame[122..132]<- imbe_d[70..80]
+     *  coset 7: frame[137..143]<- imbe_d[81..87]
+     */
+    private static int jmbeFramePosToImbeDIndex(int framePos)
+    {
+        int[][] cosets = {{0, 0, 12}, {23, 12, 12}, {46, 24, 12}, {69, 36, 12},
+                          {92, 48, 11}, {107, 59, 11}, {122, 70, 11}, {137, 81, 7}};
+        for(int[] c : cosets)
+        {
+            if(framePos >= c[0] && framePos < c[0] + c[2])
+            {
+                return c[1] + (framePos - c[0]);
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Validate that {@code IMBEFrame.fromImbe4400Data(boolean[])} correctly
+     * loads P25-extracted coset data so that synthesis produces the same audio
+     * as the direct {@code IMBEFrame(byte[])} path.
+     *
+     * Take a real P25 raw 18-byte frame, decode it normally to build path1;
+     * extract the 88-bit coset-data from path1's final frame state, feed via
+     * fromImbe4400Data to build path2; synthesize both via fresh IMBESynthesizer
+     * instances fed the same initial previous frame; compare every PCM sample.
+     *
+     * Hex captured from C:\Users\ethan\SDRTrunk\recordings\20260613_233848_773281250_1_P2087_44947.mbe.
+     */
+    @Test
+    public void testFromImbe4400DataMatchesDecodePathForP25()
+    {
+        byte[] p25Frame = hex("8A9A20B183FFBFC5C89024735948A08810A8");
+        IMBEFrame frame1 = new IMBEFrame(p25Frame);
+        BinaryFrame bf1 = frame1.getFrame();
+        System.out.println("P25 path: b0=" + frame1.getFundamentalFrequency().name() +
+                " L=" + frame1.getFundamentalFrequency().getL());
+
+        // Extract the 88-bit coset data from the post-decode frame using the
+        // same chunk layout JMBE loadImbe4400Data expects to be fed.
+        boolean[] imbe888 = new boolean[88];
+        int[][] cosets = {{0, 0, 12}, {23, 12, 12}, {46, 24, 12}, {69, 36, 12},
+                           {92, 48, 11}, {107, 59, 11}, {122, 70, 11}, {137, 81, 7}};
+        for(int[] c : cosets)
+        {
+            for(int k = 0; k < c[2]; k++)
+            {
+                imbe888[c[1] + k] = bf1.get(c[0] + k);
+            }
+        }
+
+        IMBEFrame frame2 = IMBEFrame.fromImbe4400Data(imbe888);
+        System.out.println("fromImbe4400Data path: b0=" + frame2.getFundamentalFrequency().name() +
+                " L=" + frame2.getFundamentalFrequency().getL());
+
+        // Both must agree on fundamental frequency (validates VECTOR_B0 placement incl. bits 141,142).
+        assertEquals("b0 must match across paths",
+            frame1.getFundamentalFrequency(), frame2.getFundamentalFrequency());
+
+        // Synthesize audio for both. Both synthesizers start from fresh default previous params.
+        IMBESynthesizer synth1 = new IMBESynthesizer();
+        IMBESynthesizer synth2 = new IMBESynthesizer();
+        float[] audio1 = synth1.getAudio(frame1);
+        float[] audio2 = synth2.getAudio(frame2);
+
+        assertEquals(audio1.length, audio2.length);
+        int differences = 0;
+        float maxDelta = 0f;
+        for(int n = 0; n < audio1.length; n++)
+        {
+            float d = Math.abs(audio1[n] - audio2[n]);
+            if(d > maxDelta) maxDelta = d;
+            if(d > 0.0001f)
+            {
+                if(differences < 10) System.out.println("audio[" + n + "]: " + audio1[n] + " vs " + audio2[n] + "  delta=" + d);
+                differences++;
+            }
+        }
+        System.out.println("Synthesizer sample differences: " + differences + " / " + audio1.length + " maxDelta=" + maxDelta);
+        assertEquals("loadImbe4400Data must produce identical samples as direct decode() for P25-extracted bits",
+            0, differences);
     }
 
     @Test
