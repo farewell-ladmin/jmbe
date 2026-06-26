@@ -362,6 +362,186 @@ public class ProVoiceIMBEAudioCodecTest
             0, differences);
     }
 
+    /**
+     * Compare JMBE's synthesized audio to mbelib's ground truth for the
+     * L=54 (b0=197) ProVoice frame 0988E0B8C989D7DD907FC916D09E00C6C80098D7D8.
+     *
+     * mbelib ground-truth samples were captured via:
+     *   provoice_stage_dump.exe -a <hex>  -> audio= line (160 floats)
+     * and saved to ${jmbe.mbelib.audio} (comma-separated floats, short-scale).
+     * JMBE normalizes samples to [-1,1] by dividing by Short.MAX_VALUE,
+     * so we divide mbelib samples by 32767.0 before comparison.
+     */
+    @Test
+    public void testProVoiceL54SynthesisMatchesMbelib() throws Exception
+    {
+        String audioPath = System.getProperty("jmbe.mbelib.audio");
+        if(audioPath == null)
+        {
+            System.out.println("Skipped (set -Djmbe.mbelib.audio=... to enable)");
+            return;
+        }
+
+        byte[] frame = hex("0988E0B8C989D7DD907FC916D09E00C6C80098D7D8");
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        float[] jmbeAudio = codec.getAudio(frame);
+        System.out.println("JMBE samples: " + jmbeAudio.length);
+
+        String csv = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(audioPath)),
+                java.nio.charset.StandardCharsets.US_ASCII).trim();
+        String[] parts = csv.split(",");
+        float[] mbelibAudio = new float[parts.length];
+        for(int i = 0; i < parts.length; i++)
+        {
+            mbelibAudio[i] = Float.parseFloat(parts[i].trim()) / 32767.0f;
+        }
+        System.out.println("mbelib samples: " + mbelibAudio.length);
+
+        assertEquals("Both paths produce 160 samples", 160, jmbeAudio.length);
+        assertEquals(160, mbelibAudio.length);
+
+        int differences = 0;
+        float maxDelta = 0f;
+        float jmbeMaxAbs = 0f, mbelibMaxAbs = 0f;
+        for(int n = 0; n < 160; n++)
+        {
+            float d = Math.abs(jmbeAudio[n] - mbelibAudio[n]);
+            if(d > maxDelta) maxDelta = d;
+            if(Math.abs(jmbeAudio[n]) > jmbeMaxAbs) jmbeMaxAbs = Math.abs(jmbeAudio[n]);
+            if(Math.abs(mbelibAudio[n]) > mbelibMaxAbs) mbelibMaxAbs = Math.abs(mbelibAudio[n]);
+            if(d > 0.0001f)
+            {
+                if(differences < 20)
+                {
+                    System.out.println("audio[" + n + "]: jmbe=" + jmbeAudio[n] + " mbelib=" + mbelibAudio[n] + " delta=" + d);
+                }
+                differences++;
+            }
+        }
+        System.out.println("jmbeMaxAbs=" + jmbeMaxAbs + " mbelibMaxAbs=" + mbelibMaxAbs + " maxDelta=" + maxDelta + " differences=" + differences);
+    }
+
+    /**
+     * Compare every post-decode model parameter of JMBE against mbelib ground
+     * truth for the L=54 ProVoice frame 0988E0B8C989D7DD907FC916D09E00C6C80098D7D8.
+     *
+     * Ground truth was produced via:
+     *   provoice_stage_dump.exe -a <hex> > mbelib-L54-fulldump.txt
+     * and loaded via -Djmbe.mbelib.params=<path>.
+     *
+     * Dumps Vl, log2Ml, Ml, w0, L, K, repeat so each divergent field can be
+     * identified separately.
+     */
+    @Test
+    public void testProVoiceL54ParamsMatchMbelib() throws Exception
+    {
+        String paramsPath = System.getProperty("jmbe.mbelib.params");
+        if(paramsPath == null)
+        {
+            System.out.println("Skipped (set -Djmbe.mbelib.params=... to enable)");
+            return;
+        }
+
+        byte[] frame = hex("0988E0B8C989D7DD907FC916D09E00C6C80098D7D8");
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        boolean[][] grid = codec.unpackGrid(frame);
+        codec.correctC0(grid);
+        codec.demodulate(grid);
+        boolean[] imbe7100 = codec.extractData(grid);
+        boolean[] imbe4400 = codec.convert7100To4400(imbe7100);
+        IMBEFrame imbeFrame = IMBEFrame.fromImbe4400Data(imbe4400);
+
+        // JMBE synthesis path: build params using a fresh default previous frame
+        IMBEModelParameters prev = new IMBEModelParameters();
+        IMBEModelParameters params = imbeFrame.getModelParameters(prev);
+
+        System.out.println("JMBE w0=" + params.getFundamentalFrequency());
+        System.out.println("JMBE L=" + params.getL());
+        System.out.println("JMBE voicing=" + java.util.Arrays.toString(params.getVoicingDecisions()));
+        System.out.println("JMBE log2M=" + java.util.Arrays.toString(params.getLog2SpectralAmplitudes()));
+        System.out.println("JMBE M=" + java.util.Arrays.toString(params.getSpectralAmplitudes()));
+        System.out.println("JMBE enhanced M=" + java.util.Arrays.toString(params.getEnhancedSpectralAmplitudes()));
+        System.out.println("JMBE localEnergy=" + params.getLocalEnergy());
+        System.out.println("JMBE amplitudeThreshold=" + params.getAmplitudeThreshold());
+
+        // Load mbelib ground truth
+        java.util.List<String> lines = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(paramsPath),
+                java.nio.charset.StandardCharsets.US_ASCII);
+        java.util.Map<Integer,Integer> mbelibVl = new java.util.HashMap<>();
+        float[] mbelibLog2M = new float[57];
+        float[] mbelibM = new float[57];
+        float mbelibW0 = 0f; int mbelibL = 0, mbelibK = 0, mbelibRepeat = 0;
+        for(String line : lines)
+        {
+            line = line.trim();
+            if(line.startsWith("params.cur.w0=")) mbelibW0 = Float.parseFloat(line.substring("params.cur.w0=".length()));
+            else if(line.startsWith("params.cur.L=")) mbelibL = Integer.parseInt(line.substring("params.cur.L=".length()));
+            else if(line.startsWith("params.cur.K=")) mbelibK = Integer.parseInt(line.substring("params.cur.K=".length()));
+            else if(line.startsWith("params.cur.repeat=")) mbelibRepeat = Integer.parseInt(line.substring("params.cur.repeat=".length()));
+            else if(line.startsWith("params.cur.Vl["))
+            {
+                int eq = line.indexOf('=');
+                int rb = line.indexOf(']');
+                int idx = Integer.parseInt(line.substring("params.cur.Vl[".length(), rb));
+                int v = Integer.parseInt(line.substring(eq + 1));
+                mbelibVl.put(idx, v);
+            }
+            else if(line.startsWith("params.cur.log2Ml="))
+            {
+                String[] parts = line.substring("params.cur.log2Ml=".length()).split(" ");
+                for(int i = 0; i < parts.length && i < 57; i++) mbelibLog2M[i] = Float.parseFloat(parts[i]);
+            }
+            else if(line.startsWith("params.cur.Ml="))
+            {
+                String[] parts = line.substring("params.cur.Ml=".length()).split(" ");
+                for(int i = 0; i < parts.length && i < 57; i++) mbelibM[i] = Float.parseFloat(parts[i]);
+            }
+        }
+        System.out.println("mbelib w0=" + mbelibW0);
+        System.out.println("mbelib L=" + mbelibL + " K=" + mbelibK + " repeat=" + mbelibRepeat);
+
+        // Compare Vl
+        boolean[] jmbeVl = params.getVoicingDecisions();
+        int vlDiffs = 0;
+        for(int l = 0; l <= 56; l++)
+        {
+            boolean jmbeVal = (l < jmbeVl.length) ? jmbeVl[l] : false;
+            boolean mbelibVal = mbelibVl.getOrDefault(l, 0) == 1;
+            if(jmbeVal != mbelibVal)
+            {
+                vlDiffs++;
+                if(vlDiffs <= 20) System.out.println("Vl DIFF l=" + l + " JMBE=" + jmbeVal + " mbelib=" + mbelibVal);
+            }
+        }
+        System.out.println("Vl differences: " + vlDiffs);
+
+        // Compare log2Ml
+        float[] jmbeLog2M = params.getLog2SpectralAmplitudes();
+        int log2Diffs = 0; float log2MaxDelta = 0;
+        for(int l = 0; l <= 56; l++)
+        {
+            float jmbeVal = (l < jmbeLog2M.length) ? jmbeLog2M[l] : 0f;
+            float d = Math.abs(jmbeVal - mbelibLog2M[l]);
+            if(d > log2MaxDelta) log2MaxDelta = d;
+            if(d > 0.001f) { log2Diffs++; if(log2Diffs <= 10) System.out.println("log2M DIFF l=" + l + " JMBE=" + jmbeVal + " mbelib=" + mbelibLog2M[l]); }
+        }
+        System.out.println("log2M differences: " + log2Diffs + " maxDelta=" + log2MaxDelta);
+
+        // Compare Ml
+        float[] jmbeM = params.getSpectralAmplitudes();
+        int mDiffs = 0; float mMaxDelta = 0; float mMaxJmbe = 0, mMaxMbelib = 0;
+        for(int l = 0; l <= 56; l++)
+        {
+            float jmbeVal = (l < jmbeM.length) ? jmbeM[l] : 0f;
+            float d = Math.abs(jmbeVal - mbelibM[l]);
+            if(d > mMaxDelta) mMaxDelta = d;
+            if(Math.abs(jmbeVal) > mMaxJmbe) mMaxJmbe = Math.abs(jmbeVal);
+            if(Math.abs(mbelibM[l]) > mMaxMbelib) mMaxMbelib = Math.abs(mbelibM[l]);
+            if(d > 0.1f) { mDiffs++; if(mDiffs <= 10) System.out.println("Ml DIFF l=" + l + " JMBE=" + jmbeVal + " mbelib=" + mbelibM[l]); }
+        }
+        System.out.println("Ml differences: " + mDiffs + " maxDelta=" + mMaxDelta + " maxJmbe=" + mMaxJmbe + " maxMbelib=" + mMaxMbelib);
+    }
+
     @Test
     public void testCapturedGridMatchesMbelibStages()
     {
