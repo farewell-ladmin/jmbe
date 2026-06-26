@@ -45,9 +45,12 @@ class IMBEModelParameters extends MBEModelParameters
         setVoicingDecisions(new boolean[lplus1]);
         setLog2SpectralAmplitudes(new float[lplus1]);
 
+        // Match mbelib mbe_initMbeParms cold-init: M[l]=0 (not 1.0).  mbelib
+        // (mbelib.c:95+) sets prev_mp->Ml[l] = 0 so the very first (invalid)
+        // frame after codec init synthesizes silence.  JMBE previously used
+        // Arrays.fill(..., 1.0f) which caused the unvoiced synthesis to scale
+        // white noise by M=1 -> audible noise on cold-start invalid frames.
         float[] spectralAmplitudes = new float[lplus1];
-        Arrays.fill(spectralAmplitudes, 1.0f);
-
         mSpectralAmplitudes = spectralAmplitudes;
         mEnhancedSpectralAmplitudes = spectralAmplitudes;
     }
