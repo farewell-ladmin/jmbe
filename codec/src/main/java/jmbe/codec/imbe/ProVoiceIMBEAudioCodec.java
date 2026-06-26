@@ -82,14 +82,14 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
         for(int original = 1; original <= 18; original++)
         {
-            frame.set(22 - original, grid[0][original]);
+            frame.set(23 - original, grid[0][original]);
         }
 
         Golay23.checkAndCorrect(frame, 0);
 
         for(int original = 1; original <= 18; original++)
         {
-            grid[0][original] = frame.get(22 - original);
+            grid[0][original] = frame.get(23 - original);
         }
     }
 
