@@ -143,6 +143,48 @@ public class ProVoiceIMBEAudioCodecTest
         }
     }
 
+    /**
+     * Diagnostic: mbelib decodes ProVoice/P25 b0 from imbe_d indices
+     * {0,1,2,3,4,5,85,86}. After loadImbe4400Data maps the 88-bit vector into
+     * the 144-bit frame, verify which frame index pair actually holds the b0
+     * low bits so we can confirm the VECTOR_B0 / load mapping for ProVoice.
+     */
+    @Test
+    public void testProVoiceB0MappingMatchesMbelib()
+    {
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        boolean[][] grid = codec.unpackGrid(CAPTURED_GRID_1);
+        codec.correctC0(grid);
+        codec.demodulate(grid);
+        boolean[] imbe = codec.extractData(grid);
+        boolean[] imbe4400 = codec.convert7100To4400(imbe);
+
+        int b0Mbelib = bitsToInt(imbe4400, new int[] {0, 1, 2, 3, 4, 5, 85, 86});
+        IMBEFrame frame = IMBEFrame.fromImbe4400Data(imbe4400);
+        int b0Frame142143 = frame.getFrame().getInt(new int[] {0, 1, 2, 3, 4, 5, 142, 143});
+        int b0Frame141142 = frame.getFrame().getInt(new int[] {0, 1, 2, 3, 4, 5, 141, 142});
+        int b0Frame142143FromData = bitsToInt(imbe4400, new int[] {0, 1, 2, 3, 4, 5, 86, 87});
+
+        // mbelib reference for this captured frame is b0=58, L=22.
+        assertEquals(58, b0Mbelib);
+        System.out.println("b0Mbelib=" + b0Mbelib + " b0Frame142143=" + b0Frame142143
+                + " b0Frame141142=" + b0Frame141142 + " b0Frame142143FromData=" + b0Frame142143FromData);
+    }
+
+    private static int bitsToInt(boolean[] data, int[] indexes)
+    {
+        int value = 0;
+        for(int index : indexes)
+        {
+            value = Integer.rotateLeft(value, 1);
+            if(data[index])
+            {
+                value++;
+            }
+        }
+        return value;
+    }
+
     @Test
     public void testCapturedGridMatchesMbelibStages()
     {
