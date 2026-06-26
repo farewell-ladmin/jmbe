@@ -1,8 +1,6 @@
 package jmbe.codec.imbe;
 
 import jmbe.audio.AudioWithMetadata;
-import jmbe.binary.BinaryFrame;
-import jmbe.edac.Golay23;
 import jmbe.iface.IAudioCodec;
 import jmbe.iface.IAudioWithMetadata;
 
@@ -22,6 +20,11 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
     private static final int GRID_ROWS = 7;
     private static final int GRID_COLUMNS = 24;
     private static final int GRID_BYTES = 21;
+    private static final int[] GOLAY_GENERATOR = {
+            0x63A, 0x31D, 0x7B4, 0x3DA, 0x1ED, 0x6CC,
+            0x366, 0x1B3, 0x6E3, 0x54B, 0x49F, 0x475
+    };
+    private static final int[] GOLAY_DATA_CORRECTION = buildGolayDataCorrectionTable();
     private static final int[] IMBE7100_HAMMING_GENERATOR = { 0x7AC8, 0x3D64, 0x1EB2, 0x7591 };
     private static final int[] HAMMING_MATRIX = {
             0x0, 0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40,
@@ -78,18 +81,18 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
     void correctC0(boolean[][] grid)
     {
-        BinaryFrame frame = new BinaryFrame(23);
+        boolean[] input = new boolean[23];
 
-        for(int original = 1; original <= 18; original++)
+        for(int column = 0; column < 18; column++)
         {
-            frame.set(23 - original, grid[0][original]);
+            input[column] = grid[0][column + 1];
         }
 
-        Golay23.checkAndCorrect(frame, 0);
+        boolean[] output = correctGolay2312(input);
 
-        for(int original = 1; original <= 18; original++)
+        for(int column = 0; column < 18; column++)
         {
-            grid[0][original] = frame.get(23 - original);
+            grid[0][column + 1] = output[column];
         }
     }
 
@@ -141,9 +144,9 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
             data[offset++] = grid[0][column];
         }
 
-        offset = extractGolayReversed(grid[1], 1, 23, data, offset);
-        offset = extractGolayReversed(grid[2], 0, 22, data, offset);
-        offset = extractGolayReversed(grid[3], 0, 22, data, offset);
+        offset = extractGolay(grid[1], 1, 23, data, offset);
+        offset = extractGolay(grid[2], 0, 22, data, offset);
+        offset = extractGolay(grid[3], 0, 22, data, offset);
         offset = extractHammingReversed(grid[4], data, offset);
         offset = extractHammingReversed(grid[5], data, offset);
 
@@ -155,22 +158,115 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return data;
     }
 
-    int extractGolayReversed(boolean[] row, int firstColumn, int lastColumn, boolean[] data, int offset)
+    int extractGolay(boolean[] row, int firstColumn, int lastColumn, boolean[] data, int offset)
     {
-        BinaryFrame frame = new BinaryFrame(23);
-        for(int column = lastColumn; column >= firstColumn; column--)
+        boolean[] input = new boolean[23];
+        int inputOffset = 0;
+
+        for(int column = firstColumn; column <= lastColumn; column++)
         {
-            frame.add(row[column]);
+            input[inputOffset++] = row[column];
         }
 
-        Golay23.checkAndCorrect(frame, 0);
+        boolean[] output = correctGolay2312(input);
 
-        for(int x = 0; x < 12; x++)
+        for(int x = 22; x > 10; x--)
         {
-            data[offset++] = frame.get(x);
+            data[offset++] = output[x];
         }
 
         return offset;
+    }
+
+    /**
+     * mbelib-compatible Golay(23,12) correction. mbelib corrects only the 12
+     * data bits by XORing a syndrome-indexed data mask; parity bits are copied
+     * through unchanged.
+     */
+    boolean[] correctGolay2312(boolean[] input)
+    {
+        int received = 0;
+
+        for(int x = 22; x >= 0; x--)
+        {
+            received = (received << 1) | (input[x] ? 1 : 0);
+        }
+
+        int data = received >> 11;
+        int parity = received & 0x7FF;
+        int syndrome = golayParity(data) ^ parity;
+        int correctedData = data ^ GOLAY_DATA_CORRECTION[syndrome];
+
+        boolean[] output = input.clone();
+
+        for(int x = 22; x >= 11; x--)
+        {
+            output[x] = (correctedData & (1 << (x - 11))) != 0;
+        }
+
+        return output;
+    }
+
+    private static int[] buildGolayDataCorrectionTable()
+    {
+        int[] table = new int[2048];
+        for(int x = 0; x < table.length; x++)
+        {
+            table[x] = -1;
+        }
+
+        table[0] = 0;
+
+        for(int weight = 1; weight <= 3; weight++)
+        {
+            enumerateGolayErrors(table, 0, 0, 0, weight);
+        }
+
+        for(int x = 0; x < table.length; x++)
+        {
+            if(table[x] < 0)
+            {
+                table[x] = 0;
+            }
+        }
+
+        return table;
+    }
+
+    private static void enumerateGolayErrors(int[] table, int startBit, int selected, int errorPattern, int targetWeight)
+    {
+        if(selected == targetWeight)
+        {
+            int dataError = errorPattern >> 11;
+            int parityError = errorPattern & 0x7FF;
+            int syndrome = golayParity(dataError) ^ parityError;
+
+            if(table[syndrome] < 0)
+            {
+                table[syndrome] = dataError;
+            }
+            return;
+        }
+
+        for(int bit = startBit; bit < 23; bit++)
+        {
+            enumerateGolayErrors(table, bit + 1, selected + 1, errorPattern | (1 << bit), targetWeight);
+        }
+    }
+
+    private static int golayParity(int data)
+    {
+        int parity = 0;
+
+        for(int bit = 0; bit < 12; bit++)
+        {
+            if((data & (0x800 >> bit)) != 0)
+            {
+                parity ^= GOLAY_GENERATOR[bit];
+            }
+        }
+
+        return parity;
     }
 
     int extractHammingReversed(boolean[] row, boolean[] data, int offset)

@@ -12,6 +12,30 @@ import static org.junit.Assert.assertTrue;
  */
 public class ProVoiceIMBEAudioCodecTest
 {
+    private static final byte[] CAPTURED_GRID_1 = hex("164720DB86E29BEC5C81DBA080FA00F5A200620018");
+    private static final String[] MBELIB_GRID_1_POST_C0 = {
+            "000101100100011100100000",
+            "110110111000011011100010",
+            "100110111110110001011100",
+            "100000011101101110100000",
+            "100000001111101000000000",
+            "111101011010001000000000",
+            "011000100000000000011000"
+    };
+    private static final String[] MBELIB_GRID_1_POST_DEMOD = {
+            "000101100100011100100000",
+            "011110011111011001011001",
+            "011001011001010011100110",
+            "100111001110101111101010",
+            "001111001101000000000000",
+            "111001001110000000000000",
+            "011000100000000000011000"
+    };
+    private static final String MBELIB_GRID_1_IMBE7100 =
+            "1001110101111100110111010100101101011111111000101110110000110001000110000000000001000110";
+    private static final String MBELIB_GRID_1_IMBE4400 =
+            "0011101011111001101110101001011010111111111000010010111010100010001100000000000010001101";
+
     @Test
     public void testUnpackGridIsRowMajorMsbFirst()
     {
@@ -117,6 +141,28 @@ public class ProVoiceIMBEAudioCodecTest
             IMBEFrame frame = IMBEFrame.fromImbe4400Data(imbe4400);
             assertEquals(referenceL(b0), frame.getFundamentalFrequency().getL());
         }
+    }
+
+    @Test
+    public void testCapturedGridMatchesMbelibStages()
+    {
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        boolean[][] grid = codec.unpackGrid(CAPTURED_GRID_1);
+
+        codec.correctC0(grid);
+        assertGridEquals(MBELIB_GRID_1_POST_C0, grid);
+
+        codec.demodulate(grid);
+        assertGridEquals(MBELIB_GRID_1_POST_DEMOD, grid);
+
+        boolean[] imbe7100 = codec.extractData(grid);
+        assertEquals(MBELIB_GRID_1_IMBE7100, bits(imbe7100));
+
+        boolean[] imbe4400 = codec.convert7100To4400(imbe7100);
+        assertEquals(MBELIB_GRID_1_IMBE4400, bits(imbe4400));
+
+        IMBEFrame frame = IMBEFrame.fromImbe4400Data(imbe4400);
+        assertEquals(22, frame.getFundamentalFrequency().getL());
     }
 
     private static boolean[][] patternedGrid()
@@ -269,5 +315,39 @@ public class ProVoiceIMBEAudioCodecTest
         {
             assertArrayEquals("row " + row, expected[row], actual[row]);
         }
+    }
+
+    private static void assertGridEquals(String[] expected, boolean[][] actual)
+    {
+        assertEquals(expected.length, actual.length);
+
+        for(int row = 0; row < expected.length; row++)
+        {
+            assertEquals("row " + row, expected[row], bits(actual[row]));
+        }
+    }
+
+    private static String bits(boolean[] bits)
+    {
+        StringBuilder sb = new StringBuilder(bits.length);
+
+        for(boolean bit : bits)
+        {
+            sb.append(bit ? '1' : '0');
+        }
+
+        return sb.toString();
+    }
+
+    private static byte[] hex(String value)
+    {
+        byte[] bytes = new byte[value.length() / 2];
+
+        for(int x = 0; x < bytes.length; x++)
+        {
+            bytes[x] = (byte)Integer.parseInt(value.substring(x * 2, x * 2 + 2), 16);
+        }
+
+        return bytes;
     }
 }
