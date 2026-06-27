@@ -41,9 +41,7 @@ class IMBEFrame
      * On decoding, each of the L harmonics are flagged as voiced or unvoiced
      * according to the harmonic's location within each K frequency band.
      */
-    private static final int[] VOICE_DECISION_INDEX = new int[]{0, 92, 92, 92, 93, 93, 93, 94, 94, 94, 95, 95, 95, 96,
-        96, 96, 97, 97, 97, 98, 98, 98, 99, 99, 99, 100, 100, 100, 101, 101, 101, 102, 102, 102, 107, 107, 107, 107,
-        107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107};
+    private static final int[] VOICE_DECISION_INDEX = new int[]{92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 107};
 
     /**
      * Coefficient offsets for bit lengths 0 - 10:   (2 ^ (bit length -1)) - 0.5
@@ -55,6 +53,9 @@ class IMBEFrame
     private IMBEFundamentalFrequency mFundamentalFrequency;
     private int[] mErrors = new int[7];
     private int mErrorCountTotal;
+    private boolean mRepeatOverride;
+    private boolean mMbelibErrorMode;
+    private boolean[] mLinearImbe4400Data;
 
     /**
      * Constructs an IMBE frame from a binary message containing an 18-byte or
@@ -117,11 +118,17 @@ private IMBEFrame(boolean[] imbe4400Data)
         // matching mbe_processImbe4400Dataf's errs2 > 5 / repeat > 3 logic.
         if(errors != null)
         {
+            mMbelibErrorMode = true;
+            mLinearImbe4400Data = imbe4400Data.clone();
             for(int x = 0; x < Math.min(7, errors.length); x++)
             {
                 mErrors[x] = Math.max(0, errors[x]);
                 mErrorCountTotal += mErrors[x];
             }
+
+            // ProVoice/mbelib repeats when cumulative IMBE7100 ECC errors exceed
+            // five, independent of the P25-specific coset0/error-rate threshold.
+            mRepeatOverride = mErrorCountTotal > 5;
         }
     }
 
@@ -205,11 +212,12 @@ private IMBEFrame(boolean[] imbe4400Data)
     public IMBEModelParameters getModelParameters(IMBEModelParameters previous)
     {
         IMBEModelParameters parameters = new IMBEModelParameters(getFundamentalFrequency());
+        parameters.setAdaptiveSmoothingEnabled(!mMbelibErrorMode);
         parameters.setErrors(previous.getErrorRate(), mErrors[0], mErrors[4], mErrorCountTotal);
 
         /* If we have too many errors and/or the fundamental frequency is invalid
          * perform a repeat by copying the model parameters from previous frame  */
-        if(parameters.repeatRequired())
+        if(parameters.repeatRequired() || mRepeatOverride)
         {
             parameters.copy(previous);
         }
@@ -526,10 +534,25 @@ private IMBEFrame(boolean[] imbe4400Data)
         int L = getFundamentalFrequency().getL();
 
         boolean[] decisions = new boolean[L + 1];
+        int K = L < 37 ? (L + 2) / 3 : 12;
 
         for(int x = 1; x <= L; x++)
         {
-            decisions[x] = mFrame.get(VOICE_DECISION_INDEX[x]);
+            int group = (x - 1) / 3;
+
+            if(mMbelibErrorMode && mLinearImbe4400Data != null)
+            {
+                decisions[x] = mLinearImbe4400Data[48 + Math.min(group, K - 1)];
+            }
+            else
+            {
+                int b1Index = K - 1 - group;
+                if(b1Index < 0)
+                {
+                    b1Index = 0;
+                }
+                decisions[x] = mFrame.get(VOICE_DECISION_INDEX[b1Index]);
+            }
         }
 
         return decisions;

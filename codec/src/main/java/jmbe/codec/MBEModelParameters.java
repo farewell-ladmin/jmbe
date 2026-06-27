@@ -35,6 +35,7 @@ public abstract class MBEModelParameters
     private int mErrorCount;
     private int mErrorCount4;
     private int mRepeatCount = 0;
+    private boolean mAdaptiveSmoothingEnabled = true;
 
     private IFundamentalFrequency mMBEFundamentalFrequency;
     private FrameType mFrameType;
@@ -307,7 +308,12 @@ public abstract class MBEModelParameters
      */
     public boolean requiresAdaptiveSmoothing()
     {
-        return getErrorRate() > 0.0125f || getErrorCountTotal() > 4;
+        return mAdaptiveSmoothingEnabled && (getErrorRate() > 0.0125f || getErrorCountTotal() > 4);
+    }
+
+    public void setAdaptiveSmoothingEnabled(boolean adaptiveSmoothingEnabled)
+    {
+        mAdaptiveSmoothingEnabled = adaptiveSmoothingEnabled;
     }
 
     /**
@@ -412,6 +418,11 @@ public abstract class MBEModelParameters
      */
     private void applyAdaptiveSmoothing(int previousAmplitudeThresholdTM)
     {
+        if(!mAdaptiveSmoothingEnabled)
+        {
+            return;
+        }
+
         float[] enhancedSpectralAmplitudes = getEnhancedSpectralAmplitudes();
 
         /* Algorithm #112 - calculate adaptive threshold */

@@ -244,7 +244,7 @@ enum IMBEFundamentalFrequency implements IFundamentalFrequency
     W205(205),
     W206(206),
     W207(207),
-    DEFAULT(134),  //L = 30 & w0 = 0.2985 * Pi
+    DEFAULT(95, 0.093780003f),   //Matches mbelib mbe_initMbeParms cold-init w0
     INVALID(-1);
 
     private int mIndex;
@@ -257,6 +257,13 @@ enum IMBEFundamentalFrequency implements IFundamentalFrequency
     {
         mIndex = index;
         mFrequency = (float)(4.0 * Math.PI / (index + 39.5));
+        mL = (int)Math.floor(0.9254 * Math.floor((Math.PI / mFrequency) + 0.25));
+    }
+
+    IMBEFundamentalFrequency(int index, float frequency)
+    {
+        mIndex = index;
+        mFrequency = frequency;
         mL = (int)Math.floor(0.9254 * Math.floor((Math.PI / mFrequency) + 0.25));
     }
 

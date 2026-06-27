@@ -27,23 +27,35 @@ import jmbe.codec.MBESynthesizer;
  */
 class IMBESynthesizer extends MBESynthesizer
 {
-    private IMBEModelParameters mPreviousParameters = new IMBEModelParameters();
+    private IMBEModelParameters mPreviousDecodeParameters = new IMBEModelParameters();
+    private IMBEModelParameters mPreviousSynthesisParameters = new IMBEModelParameters();
 
     @Override
     protected MBEModelParameters getPreviousFrame()
     {
-        return mPreviousParameters;
+        return mPreviousSynthesisParameters;
     }
 
     void reset()
     {
-        mPreviousParameters = new IMBEModelParameters();
+        mPreviousDecodeParameters = new IMBEModelParameters();
+        mPreviousSynthesisParameters = new IMBEModelParameters();
         // Match mbelib mbe_initMbeParms: PSIl[l]=pi/2, PHIl[l]=0, mPreviousUw=0.
         // Without this, cold-start segments inherit stale phase rolls from the
         // previous segment and the first voiced frame's phase diverges from
         // mbelib's reference synthesis path. Compounds badly for short EDACS
         // ProVoice calls where squelch flaps then reset() between segments.
         resetPhaseState();
+    }
+
+    IMBEModelParameters getPreviousDecodeParameters()
+    {
+        return mPreviousDecodeParameters;
+    }
+
+    IMBEModelParameters getPreviousSynthesisParameters()
+    {
+        return mPreviousSynthesisParameters;
     }
 
     /**
@@ -59,7 +71,12 @@ class IMBESynthesizer extends MBESynthesizer
      */
     float[] getAudio(IMBEFrame frame)
     {
-        IMBEModelParameters parameters = frame.getModelParameters(mPreviousParameters);
+        /* mbelib keeps two previous parameter streams: prev_mp for frame-to-frame
+         * parameter prediction and prev_mp_enhanced for synthesis phase/amplitude
+         * history.  Keeping them split matters because spectral enhancement mutates
+         * the synthesis amplitudes, but the next frame must still predict from raw
+         * decoded amplitudes. */
+        IMBEModelParameters parameters = frame.getModelParameters(mPreviousDecodeParameters);
 
         float[] audio;
 
@@ -71,13 +88,22 @@ class IMBESynthesizer extends MBESynthesizer
         if(parameters.isMaxFrameRepeat() || parameters.requiresMuting())
         {
             audio = new float[SAMPLES_PER_FRAME];
+
+            if(parameters.isMaxFrameRepeat())
+            {
+                mPreviousDecodeParameters = new IMBEModelParameters();
+                mPreviousSynthesisParameters = new IMBEModelParameters();
+                resetPhaseState();
+                return audio;
+            }
         }
         else
         {
             audio = getVoice(parameters);
         }
 
-        mPreviousParameters = parameters;
+        mPreviousDecodeParameters = parameters;
+        mPreviousSynthesisParameters = parameters;
 
         return audio;
     }
