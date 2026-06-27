@@ -105,7 +105,18 @@ class IMBEModelParameters extends MBEModelParameters
      */
     public void copy(IMBEModelParameters previous)
     {
-        /* Avoid continuously repeating speech sounds - reset to defaults */
+        /* Avoid continuously repeating speech sounds - reset to defaults.
+         * Matches mbelib mbe_initMbeParms after the >3-repeat mute
+         * threshold: PSIl=π/2, PHIl=0, M[l]=0, log2M[l]=0, V[l]=0.
+         * Using M=0 (not Arrays.fill(1.0f) which was the original)
+         * ensures that any subsequent frame which uses these as both
+         * prediction reference (regular M) and synth reference (enhanced
+         * M, derived from regular via mbe_spectralAmpEnhance) produces
+         * silence-aligned contribution rather than spurious energy.
+         * The getWhiteNoise()/mbe_synthesizeSilencef override in
+         * IMBESynthesizer.getAudio() takes over for the current frame,
+         * but the mPreviousParameters slot's data leaks into the next
+         * frame's prediction reference via getModelParameters(previous). */
         if(previous.getRepeatCount() > MAX_HEADROOM_THRESHOLD)
         {
             setMBEFundamentalFrequency(IMBEFundamentalFrequency.DEFAULT);
@@ -114,10 +125,13 @@ class IMBEModelParameters extends MBEModelParameters
             setVoicingDecisions(new boolean[lplus1]);
             setLog2SpectralAmplitudes(new float[lplus1]);
 
+            // Match mbelib mbe_initMbeParms: M[l]=0 (NOT Arrays.fill(1.0f)).
+            // Don't call setSpectralAmplitudes (which would invoke
+            // enhanceSpectralAmplitudes and corrupt globals like mLocalEnergy
+            // from the all-1.0 kernel); just populate the raw arrays.
             float[] spectralAmplitudes = new float[lplus1];
-            Arrays.fill(spectralAmplitudes, 1.0f);
-
-            setSpectralAmplitudes(spectralAmplitudes, getLocalEnergy(), getAmplitudeThreshold());
+            mSpectralAmplitudes = spectralAmplitudes;
+            mEnhancedSpectralAmplitudes = spectralAmplitudes;
         }
         else
         {

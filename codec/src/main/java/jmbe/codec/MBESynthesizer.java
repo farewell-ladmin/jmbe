@@ -109,6 +109,31 @@ public abstract class MBESynthesizer
     }
 
     /**
+     * Resets all phase-history / WOLA state to match mbelib's cold-init
+     * behavior invoked from {@code mbe_initMbeParms} (mbelib.c:95+):
+     * {@code prev_mp->PSIl[l] = M_PI/2; prev_mp->PHIl[l] = 0;}.
+     *
+     * <p>JMBE stores the same logical state as {@code mPreviousPhaseV}
+     * (PSIl analogue) and {@code mPreviousPhaseO} (PHIl analogue). Without
+     * reinitializing these arrays, calls to {@code reset()} leave stale
+     * phase rolls from prior segments leaking into the next segment's
+     * first voiced frame, producing phase discontinuities at squelch
+     * boundaries (especially relevant for short EDACS ProVoice segments).</p>
+     */
+    protected void resetPhaseState()
+    {
+        float halfPi = (float)Math.PI / 2.0f;
+        for(int l = 0; l < mPreviousPhaseV.length; l++)
+        {
+            mPreviousPhaseV[l] = halfPi;
+        }
+        Arrays.fill(mPreviousPhaseO, 0.0f);
+        Arrays.fill(mCurrentPhaseV, 0.0f);
+        Arrays.fill(mCurrentPhaseO, 0.0f);
+        Arrays.fill(mPreviousUw, 0.0f);
+    }
+
+    /**
      * Access previous frame's MBE model parameters
      */
     protected abstract MBEModelParameters getPreviousFrame();

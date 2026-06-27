@@ -38,6 +38,12 @@ class IMBESynthesizer extends MBESynthesizer
     void reset()
     {
         mPreviousParameters = new IMBEModelParameters();
+        // Match mbelib mbe_initMbeParms: PSIl[l]=pi/2, PHIl[l]=0, mPreviousUw=0.
+        // Without this, cold-start segments inherit stale phase rolls from the
+        // previous segment and the first voiced frame's phase diverges from
+        // mbelib's reference synthesis path. Compounds badly for short EDACS
+        // ProVoice calls where squelch flaps then reset() between segments.
+        resetPhaseState();
     }
 
     /**
@@ -55,11 +61,16 @@ class IMBESynthesizer extends MBESynthesizer
     {
         IMBEModelParameters parameters = frame.getModelParameters(mPreviousParameters);
 
-        float[] audio = null;
+        float[] audio;
 
+        // mbelib output on cur_mp->repeat > 3 is mbe_synthesizeSilencef
+        // (zero samples, no random fill). The previous JMBE behavior of
+        // returning getWhiteNoise(160, 0.003) here produced low-amplitude
+        // random samples that the mPreviousUw WOLA accumulator would carry
+        // forward into subsequent frames, perturbing the unvoiced synthesis.
         if(parameters.isMaxFrameRepeat() || parameters.requiresMuting())
         {
-            audio = getWhiteNoise();
+            audio = new float[SAMPLES_PER_FRAME];
         }
         else
         {
