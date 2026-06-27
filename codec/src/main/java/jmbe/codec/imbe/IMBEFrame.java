@@ -434,18 +434,7 @@ private IMBEFrame(boolean[] imbe4400Data)
         //Get previous frame's log2M entries and resize them to 1 greater than the max of the current L, or the
         //previous L.  Set any newly expanded indexes to the value of the previously highest numbered index
         float[] previousLog2M = resize(previousParameters.getLog2SpectralAmplitudes(),
-            Math.max(getFundamentalFrequency().getL(), previousL));
-
-        // mbelib imbe7200x4400.c mutates prev_mp when L grows so slots
-        // prevL+1..currentL repeat the old prevL value before algorithm #77.
-        // With fixed arrays this does not happen via resize, so do it here.
-        if(currentL > previousL)
-        {
-            for(int l = previousL + 1; l <= currentL; l++)
-            {
-                previousLog2M[l] = previousLog2M[previousL];
-            }
-        }
+            Math.max(getFundamentalFrequency().getL(), previousL) + 1);
 
         //Current frame spectral amplitude prediction residuals
         float[] T = getSpectralAmplitudePredictionResiduals();
@@ -466,11 +455,7 @@ private IMBEFrame(boolean[] imbe4400Data)
         }
 
         /* Algorithm #77 - log2M spectral amplitudes of current frame */
-        // mbelib uses fixed 57-slot parameter arrays and only overwrites the
-        // active 1..L harmonics; tail values remain stale and can be read by
-        // algorithm #77 as prev_log2Ml[intkl + 1]. Preserve that behavior.
-        float[] log2M = resize(previousParameters.getLog2SpectralAmplitudes(),
-            IMBEModelParameters.MAX_HARMONICS_PLUS_ONE - 1).clone();
+        float[] log2M = new float[Lplus1];
 
         //Alg 55 - Prediction coefficient
         float p;
