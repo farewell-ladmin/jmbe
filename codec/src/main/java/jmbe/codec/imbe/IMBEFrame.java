@@ -76,7 +76,7 @@ class IMBEFrame
         decode();
     }
 
-    private IMBEFrame(boolean[] imbe4400Data)
+private IMBEFrame(boolean[] imbe4400Data)
     {
         if(imbe4400Data == null || imbe4400Data.length != 88)
         {
@@ -88,9 +88,64 @@ class IMBEFrame
         mFundamentalFrequency = IMBEFundamentalFrequency.fromValue(mFrame.getInt(VECTOR_B0));
     }
 
+    /**
+     * Variant for callers that perform their own ECC (e.g. ProVoice adds the
+     * 7x24 IMBE7100 grid + Golay + Hamming + demodulate + 7100->4400
+     * conversion outside this class).  Pass an int[7] of per-coset error
+     * counts so that downstream synthesizer repeat/mute/adaptive smoothing
+     * rules fire correctly, matching the mbelib flow where
+     * mbe_eccImbe7100x4400Data -> errs is propagated to
+     * mbe_processImbe4400Dataf for the (bad == 1 || errs2 > 5) repeat check.
+     *
+     * The int[7] layout mirrors the {@code decode()} assignment order:
+     * index 0 = coset 0 (Golay), 1..3 = cosets 1..3 (Golay),
+     * 4..6 = cosets 4..6 (Hamming).  Index 7 (coset 7) is unused by ECC.
+     */
+    private IMBEFrame(boolean[] imbe4400Data, int[] errors)
+    {
+        if(imbe4400Data == null || imbe4400Data.length != 88)
+        {
+            throw new IllegalArgumentException("IMBE 4400 data must contain 88 bits");
+        }
+
+        mFrame = new BinaryFrame(144);
+        loadImbe4400Data(imbe4400Data);
+        mFundamentalFrequency = IMBEFundamentalFrequency.fromValue(mFrame.getInt(VECTOR_B0));
+
+        // Plumb the caller-supplied per-coset error counts so the synthesizer's
+        // repeat/mute/adaptive-smoothing rules fire for ProVoice frames too,
+        // matching mbe_processImbe4400Dataf's errs2 > 5 / repeat > 3 logic.
+        if(errors != null)
+        {
+            for(int x = 0; x < Math.min(7, errors.length); x++)
+            {
+                mErrors[x] = Math.max(0, errors[x]);
+                mErrorCountTotal += mErrors[x];
+            }
+        }
+    }
+
     static IMBEFrame fromImbe4400Data(boolean[] imbe4400Data)
     {
         return new IMBEFrame(imbe4400Data);
+    }
+
+    /**
+     * Variant that accepts caller-supplied per-coset error counts, allowing
+     * ProVoice's IMBE7100 ECC (Golay23 + 7100-Hamming15) to drive the same
+     * repeat/mute/adaptive smoothing rules as the P25 path.
+     *
+     * @param imbe4400Data 88-bit converted parameter vector (post
+     *                     imbe7100x4400 demodulate/extract/convert)
+     * @param errors int[] of per-coset error counts:
+     *              [0]=coset0, [1]=coset1, [2]=coset2, [3]=coset3,
+     *              [4]=coset4, [5]=coset5, [6]=coset6.
+     *              May be null or shorter than 7 in which case zero is used
+     *              for the missing cosets (matches the pre-fix behavior).
+     */
+    static IMBEFrame fromImbe4400Data(boolean[] imbe4400Data, int[] errors)
+    {
+        return new IMBEFrame(imbe4400Data, errors);
     }
 
     private void loadImbe4400Data(boolean[] data)

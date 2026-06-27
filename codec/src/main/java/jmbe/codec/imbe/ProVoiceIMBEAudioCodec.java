@@ -43,11 +43,14 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
     public float[] getAudio(byte[] frameData)
     {
         boolean[][] grid = unpackGrid(frameData);
-        correctC0(grid);
+        int c0Errors = correctC0(grid);
         demodulate(grid);
-        boolean[] imbe7100Data = extractData(grid);
+        int[] errors = new int[7];
+        boolean[] imbe7100Data = extractData(grid, errors);
+        // Errors[0] is the C0 coset error count (mirrors P25 mErrors[0])
+        errors[0] = c0Errors;
         boolean[] imbe4400Data = convert7100To4400(imbe7100Data);
-        return mSynthesizer.getAudio(IMBEFrame.fromImbe4400Data(imbe4400Data));
+        return mSynthesizer.getAudio(IMBEFrame.fromImbe4400Data(imbe4400Data, errors));
     }
 
     @Override
@@ -79,7 +82,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
         return grid;
     }
 
-    void correctC0(boolean[][] grid)
+    int correctC0(boolean[][] grid)
     {
         boolean[] input = new boolean[23];
 
@@ -90,10 +93,19 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
         boolean[] output = correctGolay2312(input);
 
+        // Count the data bits that changed (matches mbelib mbe_golay2312 errs
+        // counting semantics - corrected data bits relative to input).
+        int errors = 0;
         for(int column = 0; column < 18; column++)
         {
+            if(grid[0][column + 1] != output[column])
+            {
+                errors++;
+            }
             grid[0][column + 1] = output[column];
         }
+
+        return errors;
     }
 
     void demodulate(boolean[][] grid)
@@ -136,24 +148,40 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
     boolean[] extractData(boolean[][] grid)
     {
+        return extractData(grid, new int[7]);
+    }
+
+    boolean[] extractData(boolean[][] grid, int[] errors)
+    {
         boolean[] data = new boolean[88];
         int offset = 0;
 
+        // C0 bits (coset 0) - no error count, ECC already done in correctC0
         for(int column = 18; column > 11; column--)
         {
             data[offset++] = grid[0][column];
         }
 
-        offset = extractGolay(grid[1], 1, 23, data, offset);
-        offset = extractGolay(grid[2], 0, 22, data, offset);
-        offset = extractGolay(grid[3], 0, 22, data, offset);
-        offset = extractHammingReversed(grid[4], data, offset);
-        offset = extractHammingReversed(grid[5], data, offset);
+        // mbelib map: errs2 = c0 + sum(golay for rows 1..3) + sum(hamming for rows 4..5)
+        // JMBE errors[] map: 0=c0, 1=row1, 2=row2, 3=row3, 4=row4, 5=row5, 6=row6(none).
+        errors[1] = extractGolay(grid[1], 1, 23, data, offset);
+        offset += 12;
+        errors[2] = extractGolay(grid[2], 0, 22, data, offset);
+        offset += 12;
+        errors[3] = extractGolay(grid[3], 0, 22, data, offset);
+        offset += 12;
+        errors[4] = extractHammingReversed(grid[4], data, offset);
+        offset += 11;
+        errors[5] = extractHammingReversed(grid[5], data, offset);
+        offset += 11;
 
+        // Coset 6 (row 6) is uncoded raw Vl[] voicing bits - no error count.
         for(int column = 22; column >= 0; column--)
         {
             data[offset++] = grid[6][column];
         }
+
+        errors[6] = 0;
 
         return data;
     }
@@ -170,12 +198,20 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
         boolean[] output = correctGolay2312(input);
 
+        // Count corrected data bits (matches mbelib mbe_golay2312 errs returned
+        // across all 23 bits, but JMBE correctGolay2312 only flips data bits so
+        // this is equivalent to mbelib's data-bit-only correction count).
+        int errors = 0;
         for(int x = 22; x > 10; x--)
         {
+            if(output[x] != input[x])
+            {
+                errors++;
+            }
             data[offset++] = output[x];
         }
 
-        return offset;
+        return errors;
     }
 
     /**
@@ -283,6 +319,11 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
             syndrome = (syndrome << 1) | (Integer.bitCount(block & generator) & 1);
         }
 
+        // mbelib mbe_7100x4400hamming1511 returns errs that mbe_hamming1511
+        // computes as Integer.bitCount(syndrome). For single-bit correction
+        // that's the weight of the syndrome (1 if non-zero).
+        int errors = syndrome > 0 ? 1 : 0;
+
         if(syndrome > 0)
         {
             block ^= HAMMING_MATRIX[syndrome];
@@ -293,7 +334,7 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
             data[offset++] = (block & (1 << x)) != 0;
         }
 
-        return offset;
+        return errors;
     }
 
     boolean[] convert7100To4400(boolean[] imbe7100Data)
