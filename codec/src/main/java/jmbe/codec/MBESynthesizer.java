@@ -139,6 +139,26 @@ public abstract class MBESynthesizer
     protected abstract MBEModelParameters getPreviousFrame();
 
     /**
+     * Diagnostic accessor: after {@link #getVoice} completes, {@code mPreviousPhaseV} holds the
+     * just-synthesized frame's propagated voiced phase (PSIl analogue, mbelib {@code cur_mp->PSIl}).
+     * Used by the ProVoice phase-parity harness; not part of synthesis.
+     */
+    protected float[] getCurrentPsil()
+    {
+        return mPreviousPhaseV;
+    }
+
+    /**
+     * Diagnostic accessor: after {@link #getVoice} completes, {@code mPreviousPhaseO} holds the
+     * just-synthesized frame's per-harmonic synthesis phase (PHIl analogue, mbelib
+     * {@code cur_mp->PHIl}). Used by the ProVoice phase-parity harness; not part of synthesis.
+     */
+    protected float[] getCurrentPhil()
+    {
+        return mPreviousPhaseO;
+    }
+
+    /**
      * Returns the speech synthesis window coefficient from appendix I
      */
     private static float synthesisWindow(int n)

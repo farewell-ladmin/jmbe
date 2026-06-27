@@ -58,6 +58,18 @@ class IMBESynthesizer extends MBESynthesizer
         return mPreviousSynthesisParameters;
     }
 
+    /** Diagnostic: just-synthesized frame's PSIl (propagated voiced phase). */
+    float[] getCurrentPsilArray()
+    {
+        return getCurrentPsil();
+    }
+
+    /** Diagnostic: just-synthesized frame's PHIl (per-harmonic synthesis phase). */
+    float[] getCurrentPhilArray()
+    {
+        return getCurrentPhil();
+    }
+
     /**
      * Synthesizes 20 milliseconds of audio from the imbe frame parameters in
      * the following format:

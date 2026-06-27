@@ -78,6 +78,358 @@ public class ProVoiceSequentialParityTest
         }
     }
 
+    /**
+     * Compares the sequential synthesized audio (the {@code audio=} line) between mbelib and JMBE.
+     *
+     * <p>The existing {@link #compareSequentialMbelibDump()} only validates model parameters
+     * (params.cur) and silently ignores the synthesized waveform, giving false confidence: bit-exact
+     * parameters can still produce garbled audio if synthesis phase/algorithm diverge. This test
+     * surfaces that divergence using per-frame zero-lag Pearson correlation.</p>
+     *
+     * <p>Correlation, not per-sample diff, is the right metric because mbelib's unvoiced/high-harmonic
+     * phases come from the C-library {@code rand()} sequence which JMBE cannot bit-reproduce. Unvoiced
+     * bands therefore cannot correlate by design (random noise sounds the same regardless of phase),
+     * so the report buckets correlation by the frame's voiced fraction. Voiced content carries the
+     * intelligibility; that is where high correlation must hold.</p>
+     *
+     * <p>This is a diagnostic report. It only hard-fails if the highly-voiced bucket regresses below a
+     * loose floor so a clear voiced-phase break cannot slip through unnoticed.</p>
+     */
+    @Test
+    public void compareSequentialAudio() throws Exception
+    {
+        String hexPath = property("jmbe.provoice.hex", "JMBE_PROVOICE_HEX");
+        String mbelibPath = property("jmbe.mbelib.dump", "JMBE_MBELIB_DUMP");
+
+        if(hexPath == null || mbelibPath == null)
+        {
+            System.out.println("Skipped (set -Djmbe.provoice.hex=... and -Djmbe.mbelib.dump=...)");
+            return;
+        }
+
+        List<String> hexFrames = readHexFrames(hexPath);
+        List<ReferenceFrame> referenceFrames = readReferenceAudioFrames(mbelibPath);
+        assertEquals("frame count", hexFrames.size(), referenceFrames.size());
+
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        IMBESynthesizer synthesizer = new IMBESynthesizer();
+
+        double[] bucketCorrSum = new double[5];
+        int[] bucketCount = new int[5];
+        int audibleFrames = 0;
+        int wellCorrelated = 0;
+        String worstVoicedFrame = null;
+        double worstVoicedCorr = 2.0;
+
+        for(int index = 0; index < hexFrames.size(); index++)
+        {
+            DumpFrame actual = decode(codec, synthesizer, hexFrames.get(index));
+            ReferenceFrame expected = referenceFrames.get(index);
+
+            if(expected.audio == null || actual.audio == null)
+            {
+                continue;
+            }
+
+            double referenceRms = rms(expected.audio);
+            if(referenceRms < 1.0e-6)
+            {
+                continue; //mbelib synthesized silence; nothing to correlate
+            }
+
+            audibleFrames++;
+            double correlation = pearson(expected.audio, actual.audio);
+            double voicedFraction = actual.cur.L > 0 ? (double)voicedCount(actual.cur) / actual.cur.L : 0.0;
+            int bucket = Math.min(4, (int)(voicedFraction * 5.0));
+            bucketCorrSum[bucket] += correlation;
+            bucketCount[bucket]++;
+
+            if(correlation > 0.7)
+            {
+                wellCorrelated++;
+            }
+
+            if(voicedFraction >= 0.6 && correlation < worstVoicedCorr)
+            {
+                worstVoicedCorr = correlation;
+                worstVoicedFrame = "frame " + (index + 1) + " L=" + actual.cur.L +
+                        " vf=" + String.format(java.util.Locale.US, "%.2f", voicedFraction) +
+                        " corr=" + String.format(java.util.Locale.US, "%.3f", correlation);
+            }
+        }
+
+        System.out.println("=== ProVoice sequential AUDIO correlation (mbelib vs JMBE) ===");
+        System.out.println("audible frames=" + audibleFrames + " wellCorrelated(>0.7)=" + wellCorrelated +
+                " (" + String.format(java.util.Locale.US, "%.1f", 100.0 * wellCorrelated / Math.max(1, audibleFrames)) + "%)");
+        String[] labels = {"0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"};
+        for(int b = 0; b < 5; b++)
+        {
+            System.out.println("  voicedFraction " + labels[b] + ": n=" + bucketCount[b] +
+                    " meanCorr=" + String.format(java.util.Locale.US, "%.3f", bucketCount[b] > 0 ? bucketCorrSum[b] / bucketCount[b] : 0.0));
+        }
+        if(worstVoicedFrame != null)
+        {
+            System.out.println("  worst mostly-voiced frame: " + worstVoicedFrame);
+        }
+
+        //Guard against a gross voiced-phase regression. The highly-voiced bucket should retain
+        //meaningful positive correlation; a value near zero or negative means voiced phase broke.
+        double highlyVoicedMean = bucketCount[4] > 0 ? bucketCorrSum[4] / bucketCount[4] : Double.NaN;
+        if(!Double.isNaN(highlyVoicedMean))
+        {
+            org.junit.Assert.assertTrue("highly-voiced (0.8-1.0) mean correlation regressed below 0.3: " +
+                    highlyVoicedMean, highlyVoicedMean >= 0.3);
+        }
+    }
+
+    /**
+     * Compares the low-harmonic synthesis phase (PSIl, and PHIl where deterministic) between mbelib
+     * and JMBE. Reads the mbelib phase dump produced by {@code provoice_stage_dump -a} (which now emits
+     * {@code cur.PSIl=} / {@code cur.PHIl=} lines).
+     *
+     * <p>Only harmonics {@code l <= L/4} are checked for PHIl because above that band mbelib derives
+     * PHIl from the C {@code rand()} sequence, which JMBE cannot reproduce. PSIl is fully deterministic
+     * for all l, so it is checked across all active harmonics. The first divergent low-harmonic phase
+     * frame is reported - that is where any voiced-phase bug first appears.</p>
+     */
+    @Test
+    public void compareSequentialPhase() throws Exception
+    {
+        String hexPath = property("jmbe.provoice.hex", "JMBE_PROVOICE_HEX");
+        String phasePath = property("jmbe.mbelib.phase", "JMBE_MBELIB_PHASE");
+
+        if(hexPath == null || phasePath == null)
+        {
+            System.out.println("Skipped (set -Djmbe.provoice.hex=... and -Djmbe.mbelib.phase=...)");
+            return;
+        }
+
+        List<String> hexFrames = readHexFrames(hexPath);
+        List<PhaseFrame> reference = readReferencePhaseFrames(phasePath);
+        assertEquals("frame count", hexFrames.size(), reference.size());
+
+        ProVoiceIMBEAudioCodec codec = new ProVoiceIMBEAudioCodec();
+        IMBESynthesizer synthesizer = new IMBESynthesizer();
+
+        int comparedFrames = 0;
+        int psilMismatchFrames = 0;
+        int philMismatchFrames = 0;
+        double maxPsilDelta = 0.0;
+        double maxPhilDelta = 0.0;
+        String firstPsilDivergence = null;
+        String firstPhilDivergence = null;
+        int reported = 0;
+
+        for(int index = 0; index < hexFrames.size(); index++)
+        {
+            DumpFrame actual = decode(codec, synthesizer, hexFrames.get(index));
+            PhaseFrame expected = reference.get(index);
+
+            float[] jmbePsil = synthesizer.getCurrentPsilArray();
+            float[] jmbePhil = synthesizer.getCurrentPhilArray();
+
+            if(expected.psil == null || actual.cur.L <= 0)
+            {
+                continue;
+            }
+
+            //Skip frames JMBE muted/repeated (audio all-zero) - phase isn't computed there.
+            boolean muted = actual.audio != null && rms(actual.audio) < 1.0e-9;
+            if(muted)
+            {
+                continue;
+            }
+
+            comparedFrames++;
+            int L = actual.cur.L;
+            int philBand = L / 4;
+            boolean psilBad = false;
+            boolean philBad = false;
+
+            for(int l = 1; l <= L && l <= 56; l++)
+            {
+                double dPsil = phaseDelta(expected.psil[l], jmbePsil[l]);
+                if(dPsil > maxPsilDelta)
+                {
+                    maxPsilDelta = dPsil;
+                }
+                if(dPsil > 0.01 && !psilBad)
+                {
+                    psilBad = true;
+                    if(firstPsilDivergence == null)
+                    {
+                        firstPsilDivergence = "frame " + (index + 1) + " l=" + l + " L=" + L +
+                                " mbelibPSIl=" + expected.psil[l] + " jmbePSIl=" + jmbePsil[l] +
+                                " delta=" + String.format(java.util.Locale.US, "%.5f", dPsil);
+                    }
+                }
+
+                //PHIl only matters where the harmonic is voiced in the current frame; unvoiced
+                //harmonics ignore PHIl entirely during synthesis. Restrict to voiced low harmonics.
+                boolean voicedHere = l < actual.cur.vl.length && actual.cur.vl[l] == 1;
+                if(l <= philBand && voicedHere)
+                {
+                    double dPhil = phaseDelta(expected.phil[l], jmbePhil[l]);
+                    if(dPhil > maxPhilDelta)
+                    {
+                        maxPhilDelta = dPhil;
+                    }
+                    if(dPhil > 0.01 && !philBad)
+                    {
+                        philBad = true;
+                        if(firstPhilDivergence == null)
+                        {
+                            firstPhilDivergence = "frame " + (index + 1) + " l=" + l + " L=" + L +
+                                    " (philBand<=" + philBand + ") mbelibPHIl=" + expected.phil[l] +
+                                    " jmbePHIl=" + jmbePhil[l] +
+                                    " delta=" + String.format(java.util.Locale.US, "%.5f", dPhil);
+                        }
+                    }
+                }
+            }
+
+            if(psilBad)
+            {
+                psilMismatchFrames++;
+            }
+            if(philBad)
+            {
+                philMismatchFrames++;
+                if(reported < 8)
+                {
+                    reported++;
+                    System.out.println("  PHIl mismatch frame " + (index + 1) + " L=" + L +
+                            " philBand<=" + philBand + " l1: mbelibPHIl=" + expected.phil[1] +
+                            " jmbePHIl=" + jmbePhil[1] + " mbelibPSIl=" + expected.psil[1] +
+                            " jmbePSIl=" + jmbePsil[1]);
+                }
+            }
+        }
+
+        System.out.println("=== ProVoice sequential PHASE comparison (mbelib vs JMBE) ===");
+        System.out.println("compared frames=" + comparedFrames);
+        System.out.println("PSIl: mismatch frames=" + psilMismatchFrames + " maxDelta(rad)=" +
+                String.format(java.util.Locale.US, "%.6f", maxPsilDelta));
+        System.out.println("  first PSIl divergence: " + (firstPsilDivergence == null ? "none" : firstPsilDivergence));
+        System.out.println("PHIl (l<=L/4 only): mismatch frames=" + philMismatchFrames + " maxDelta(rad)=" +
+                String.format(java.util.Locale.US, "%.6f", maxPhilDelta));
+        System.out.println("  first PHIl divergence: " + (firstPhilDivergence == null ? "none" : firstPhilDivergence));
+    }
+
+    private static double phaseDelta(float a, float b)
+    {
+        double d = a - b;
+        d = d % (2.0 * Math.PI);
+        if(d > Math.PI)
+        {
+            d -= 2.0 * Math.PI;
+        }
+        else if(d < -Math.PI)
+        {
+            d += 2.0 * Math.PI;
+        }
+        return Math.abs(d);
+    }
+
+    private static List<PhaseFrame> readReferencePhaseFrames(String path) throws Exception
+    {
+        List<PhaseFrame> frames = new ArrayList<>();
+        PhaseFrame current = null;
+
+        for(String line : Files.readAllLines(Paths.get(path), StandardCharsets.ISO_8859_1))
+        {
+            line = line.trim();
+            if(line.startsWith("FRAME "))
+            {
+                current = new PhaseFrame();
+                frames.add(current);
+            }
+            else if(current != null && line.startsWith("cur.PSIl="))
+            {
+                current.psil = parsePhaseArray(line.substring("cur.PSIl=".length()).trim());
+            }
+            else if(current != null && line.startsWith("cur.PHIl="))
+            {
+                current.phil = parsePhaseArray(line.substring("cur.PHIl=".length()).trim());
+            }
+        }
+
+        return frames;
+    }
+
+    private static float[] parsePhaseArray(String value)
+    {
+        String[] parts = value.split("\\s+");
+        //mbelib emits l=1..56 -> store 1-indexed (slot 0 unused) for direct l lookup
+        float[] array = new float[57];
+        for(int index = 0; index < parts.length && (index + 1) < array.length; index++)
+        {
+            array[index + 1] = Float.parseFloat(parts[index]);
+        }
+        return array;
+    }
+
+    private static class PhaseFrame
+    {
+        float[] psil;
+        float[] phil;
+    }
+
+    private static int voicedCount(ParamFrame frame)
+    {
+        int count = 0;
+        for(int index = 1; index <= frame.L && index < frame.vl.length; index++)
+        {
+            if(frame.vl[index] == 1)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static double rms(float[] samples)
+    {
+        double sum = 0.0;
+        for(float sample : samples)
+        {
+            sum += (double)sample * sample;
+        }
+        return Math.sqrt(sum / samples.length);
+    }
+
+    private static double pearson(float[] a, float[] b)
+    {
+        int n = Math.min(a.length, b.length);
+        double meanA = 0.0;
+        double meanB = 0.0;
+        for(int i = 0; i < n; i++)
+        {
+            meanA += a[i];
+            meanB += b[i];
+        }
+        meanA /= n;
+        meanB /= n;
+
+        double num = 0.0;
+        double denomA = 0.0;
+        double denomB = 0.0;
+        for(int i = 0; i < n; i++)
+        {
+            double x = a[i] - meanA;
+            double y = b[i] - meanB;
+            num += x * y;
+            denomA += x * x;
+            denomB += y * y;
+        }
+
+        if(denomA <= 0.0 || denomB <= 0.0)
+        {
+            return 0.0;
+        }
+        return num / Math.sqrt(denomA * denomB);
+    }
+
     private static DumpFrame decode(ProVoiceIMBEAudioCodec codec, IMBESynthesizer synthesizer, String hex)
     {
         byte[] frameBytes = hex(hex);
@@ -296,6 +648,34 @@ public class ProVoiceSequentialParityTest
         }
     }
 
+    private static List<ReferenceFrame> readReferenceAudioFrames(String path) throws Exception
+    {
+        List<ReferenceFrame> frames = new ArrayList<>();
+        ReferenceFrame current = null;
+
+        for(String line : Files.readAllLines(Paths.get(path), StandardCharsets.ISO_8859_1))
+        {
+            line = line.trim();
+            if(line.startsWith("FRAME "))
+            {
+                current = new ReferenceFrame();
+                frames.add(current);
+            }
+            else if(current != null && line.startsWith("audio="))
+            {
+                String[] parts = line.substring("audio=".length()).trim().split("\\s+");
+                float[] audio = new float[parts.length];
+                for(int index = 0; index < parts.length; index++)
+                {
+                    audio[index] = Float.parseFloat(parts[index]);
+                }
+                current.audio = audio;
+            }
+        }
+
+        return frames;
+    }
+
     private static List<String> readHexFrames(String path) throws Exception
     {
         String text = new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.US_ASCII);
@@ -410,6 +790,7 @@ public class ProVoiceSequentialParityTest
     {
         int b0_4400;
         ParamFrame cur;
+        float[] audio;
         Map<String, String> values = new HashMap<>();
     }
 
