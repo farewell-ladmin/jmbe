@@ -341,7 +341,11 @@ public abstract class MBEModelParameters
         float rm0squared = rm0 * rm0;
         float rm1squared = rm1 * rm1;
 
-        float[] enhancedSpectralAmplitudes = new float[L + 1];
+        // mbelib stores model parameters in fixed-size arrays and only mutates
+        // active harmonics 1..L. Preserve any stale tail entries because later
+        // frames can read them during log2M prediction when intkl + 1 lands
+        // just beyond the previous frame's L.
+        float[] enhancedSpectralAmplitudes = spectralAmplitudes.clone();
 
         if(rm0 == 0.0f)
         {

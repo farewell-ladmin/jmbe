@@ -100,6 +100,7 @@ public class ProVoiceSequentialParityTest
         dump.errs2 = c0Errors + dump.dataErrors;
         dump.b0_7100 = bitsToInt(imbe7100, new int[] {1, 2, 3, 4, 5, 6, 86, 87});
         dump.b0_4400 = bitsToInt(imbe4400, new int[] {0, 1, 2, 3, 4, 5, 85, 86});
+        dump.imbe4400Bits = bits(imbe4400, 0, imbe4400.length);
         dump.b1Bits = bits(imbe4400, 48, 12);
         dump.cur = ParamFrame.from(synthesizer.getPreviousSynthesisParameters(), true);
         dump.prev = ParamFrame.from(synthesizer.getPreviousDecodeParameters(), false);
@@ -185,6 +186,7 @@ public class ProVoiceSequentialParityTest
         writer.write("errs2=" + dump.errs2 + "\n");
         writer.write("b0_7100=" + dump.b0_7100 + "\n");
         writer.write("b0_4400=" + dump.b0_4400 + "\n");
+        writer.write("imbe4400=" + dump.imbe4400Bits + "\n");
         writer.write("imbe4400_b1=" + dump.b1Bits + "\n");
         writeParams(writer, "params.cur", dump.cur);
         writeParams(writer, "params.prev", dump.prev);
@@ -396,6 +398,7 @@ public class ProVoiceSequentialParityTest
         int errs2;
         int b0_7100;
         int b0_4400;
+        String imbe4400Bits;
         String b1Bits;
         ParamFrame cur;
         ParamFrame prev;

@@ -93,15 +93,21 @@ public class ProVoiceIMBEAudioCodec implements IAudioCodec
 
         boolean[] output = correctGolay2312(input);
 
-        // Count the data bits that changed (matches mbelib mbe_golay2312 errs
-        // counting semantics - corrected data bits relative to input).
+        // mbelib pads C0 bits 18..22 with zeros before Golay correction and
+        // returns the changed-data-bit count from positions 22..11. Only bits
+        // 0..17 are copied back into the frame, so count before the copy using
+        // the same positions mbelib's mbe_golay2312 reports.
         int errors = 0;
-        for(int column = 0; column < 18; column++)
+        for(int x = 22; x > 10; x--)
         {
-            if(grid[0][column + 1] != output[column])
+            if(output[x] != input[x])
             {
                 errors++;
             }
+        }
+
+        for(int column = 0; column < 18; column++)
+        {
             grid[0][column + 1] = output[column];
         }
 

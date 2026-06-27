@@ -28,6 +28,7 @@ import java.util.Arrays;
  */
 class IMBEModelParameters extends MBEModelParameters
 {
+    static final int MAX_HARMONICS_PLUS_ONE = 57;
     private static final int MAX_HEADROOM_THRESHOLD = 3;
     private int mErrorCountCoset0 = 0;  //E0
 
@@ -40,17 +41,15 @@ class IMBEModelParameters extends MBEModelParameters
     {
         super(frequency);
 
-        int lplus1 = getL() + 1;
-
-        setVoicingDecisions(new boolean[lplus1]);
-        setLog2SpectralAmplitudes(new float[lplus1]);
+        setVoicingDecisions(new boolean[MAX_HARMONICS_PLUS_ONE]);
+        setLog2SpectralAmplitudes(new float[MAX_HARMONICS_PLUS_ONE]);
 
         // Match mbelib mbe_initMbeParms cold-init: M[l]=0 (not 1.0).  mbelib
         // (mbelib.c:95+) sets prev_mp->Ml[l] = 0 so the very first (invalid)
         // frame after codec init synthesizes silence.  JMBE previously used
         // Arrays.fill(..., 1.0f) which caused the unvoiced synthesis to scale
         // white noise by M=1 -> audible noise on cold-start invalid frames.
-        float[] spectralAmplitudes = new float[lplus1];
+        float[] spectralAmplitudes = new float[MAX_HARMONICS_PLUS_ONE];
         mSpectralAmplitudes = spectralAmplitudes;
         mEnhancedSpectralAmplitudes = spectralAmplitudes;
     }
@@ -120,16 +119,15 @@ class IMBEModelParameters extends MBEModelParameters
         if(previous.getRepeatCount() > MAX_HEADROOM_THRESHOLD)
         {
             setMBEFundamentalFrequency(IMBEFundamentalFrequency.DEFAULT);
-            int lplus1 = getL() + 1;
 
-            setVoicingDecisions(new boolean[lplus1]);
-            setLog2SpectralAmplitudes(new float[lplus1]);
+            setVoicingDecisions(new boolean[MAX_HARMONICS_PLUS_ONE]);
+            setLog2SpectralAmplitudes(new float[MAX_HARMONICS_PLUS_ONE]);
 
             // Match mbelib mbe_initMbeParms: M[l]=0 (NOT Arrays.fill(1.0f)).
             // Don't call setSpectralAmplitudes (which would invoke
             // enhanceSpectralAmplitudes and corrupt globals like mLocalEnergy
             // from the all-1.0 kernel); just populate the raw arrays.
-            float[] spectralAmplitudes = new float[lplus1];
+            float[] spectralAmplitudes = new float[MAX_HARMONICS_PLUS_ONE];
             mSpectralAmplitudes = spectralAmplitudes;
             mEnhancedSpectralAmplitudes = spectralAmplitudes;
         }
@@ -137,8 +135,21 @@ class IMBEModelParameters extends MBEModelParameters
         {
             setMBEFundamentalFrequency(previous.getIMBEFundamentalFrequency());
             setVoicingDecisions(previous.getVoicingDecisions());
-            setLog2SpectralAmplitudes(previous.getLog2SpectralAmplitudes());
-            setSpectralAmplitudes(previous.getSpectralAmplitudes(), previous.getLocalEnergy(), previous.getAmplitudeThreshold());
+            float[] log2SpectralAmplitudes = previous.getLog2SpectralAmplitudes().clone();
+            float[] spectralAmplitudes = previous.getSpectralAmplitudes().clone();
+
+            // mbelib's fixed-size parameter arrays retain a useful prediction
+            // tail across repeated frames. In practice the repeated frame carries
+            // the last active harmonic into higher slots that later frames may
+            // sample via prev_log2Ml[intkl + 1].
+            for(int l = getL() + 1; l < MAX_HARMONICS_PLUS_ONE; l++)
+            {
+                log2SpectralAmplitudes[l] = log2SpectralAmplitudes[getL()];
+                spectralAmplitudes[l] = spectralAmplitudes[getL()];
+            }
+
+            setLog2SpectralAmplitudes(log2SpectralAmplitudes);
+            setSpectralAmplitudes(spectralAmplitudes, previous.getLocalEnergy(), previous.getAmplitudeThreshold());
             setAmplitudeThreshold(previous.getAmplitudeThreshold());
             setLocalEnergy(previous.getLocalEnergy());
             mErrorCountCoset0 = previous.getErrorCountCoset0();
