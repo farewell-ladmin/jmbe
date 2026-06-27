@@ -35,13 +35,21 @@ class IMBEFrame
     private static final int[] VECTOR_B0 = {0, 1, 2, 3, 4, 5, 141, 142};
 
     /**
-     * Message frame bit index of the voiced/unvoiced decision for all values
-     * of L harmonics. On encoding, a voicing decision is made for each of the
-     * K frequency bands and recorded in the b1 information vector.
-     * On decoding, each of the L harmonics are flagged as voiced or unvoiced
-     * according to the harmonic's location within each K frequency band.
+     * P25/IMBE frame bit positions for each harmonic's voiced/unvoiced decision (index 1..56).
+     * Each harmonic maps directly to the frame bit that carries its K-band voicing flag.
+     * Index 0 is unused; harmonics 1..L are read here by the standard P25 decode path.
      */
-    private static final int[] VOICE_DECISION_INDEX = new int[]{92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 107};
+    private static final int[] VOICE_DECISION_INDEX = new int[]{0, 92, 92, 92, 93, 93, 93, 94, 94, 94, 95, 95, 95, 96,
+        96, 96, 97, 97, 97, 98, 98, 98, 99, 99, 99, 100, 100, 100, 101, 101, 101, 102, 102, 102, 107, 107, 107, 107,
+        107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107};
+
+    /**
+     * ProVoice/mbelib K-band frame bit positions in ascending K order (K=0..11).
+     * Used only when mMbelibErrorMode=true; ProVoice voicing is read from the
+     * linear imbe4400 data at positions 48..59 in ascending group order, not
+     * the reversed P25 ordering.
+     */
+    private static final int[] VOICE_DECISION_INDEX_PV = new int[]{92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 107};
 
     /**
      * Coefficient offsets for bit lengths 0 - 10:   (2 ^ (bit length -1)) - 0.5
@@ -538,20 +546,17 @@ private IMBEFrame(boolean[] imbe4400Data)
 
         for(int x = 1; x <= L; x++)
         {
-            int group = (x - 1) / 3;
-
             if(mMbelibErrorMode && mLinearImbe4400Data != null)
             {
+                // ProVoice: voicing flags are in imbe4400 bits 48..59 in ascending
+                // group order (group = floor((x-1)/3)), matching mbelib's linear read.
+                int group = (x - 1) / 3;
                 decisions[x] = mLinearImbe4400Data[48 + Math.min(group, K - 1)];
             }
             else
             {
-                int b1Index = K - 1 - group;
-                if(b1Index < 0)
-                {
-                    b1Index = 0;
-                }
-                decisions[x] = mFrame.get(VOICE_DECISION_INDEX[b1Index]);
+                // P25/standard IMBE: use the per-harmonic frame bit table directly.
+                decisions[x] = mFrame.get(VOICE_DECISION_INDEX[x]);
             }
         }
 
